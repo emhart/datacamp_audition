@@ -1,0 +1,161 @@
+---
+title: "Plotting graph data in R"
+output: html_document
+---
+
+
+
+## Lesson objectives
+
+* Ensure students are familiar with the basic concept of graphs
+* Introduce basics of creating a graph object with igraph library
+* Visualize multiple dimensions of graph data by modifying color and size of nodes
+
+## Lesson pre-requisites
+
+* How to read data into R
+* Filtering data with `dplyr`
+* Regular expressions
+
+In this lesson I'll be covering how to plot graphs in R using igraph. I will move through three basic sections.  Starting out I'll go over the basics of what a graph is and some of it's properties. Then I'll introduce the basics of plotting using the igraph library in R. Finally we'll go over a real world example using some sample Twitter data.
+
+
+### What is a graph?
+
+*A note about semantics:* Properly speaking, a network is different from a graph, with a graph being a more abstract concept. For our purposes they are essentially the same, however we will use the terminology of the igraph package to retain simplicity.
+
+At it's most basic form, a graph is a set of vertices and edges with the edges defining a relationship between the vertices. Graphs may be either direct or undirected. Directed graphs are said to have an origin and a destination vertex with the direction describing the flow between vertices. It's probably easiest to think of graphs from real world examples. The most obvious to most people is probably the social graph, basically your friends! More examples of graphs:
+
+* Protien interaction networks
+* Food webs
+* Social media (Facebook, Twitter, LinkIn, etc..)
+* Disease spread in epidemiological models 
+* Communication between computers (literally the network)
+
+
+### Basics of plotting
+
+
+First lets load up the libraries we'll need.  Today we'll use `igraph` to plot and create graph objects, `stringr` to parse tweet text, and `dplyr` to munge data.
+
+```{r load libraries, message=FALSE,warning=FALSE}
+library(stringr)
+library(igraph)
+library(dplyr)
+
+```
+
+At it's most basic, a graph object is simply a set of vertices and a set of edges. In igraph there are multiple ways to create a graph, but one of the easiest ways is to create an empty graph and then add vertices and edges.
+ 
+```{r creating an empty graph}
+g <- graph.empty(directed = F)
+g <- g+vertices(c(1,2,3))
+plot(g)
+
+```
+
+This creates an empty graph and then we add three vertices.  Next let's draw some edges between them.
+
+
+```{r adding edges}
+
+g <- g + edges(c(1,2,2,3,3,1))
+plot(g)
+
+```
+
+The method of building up graphs (similar to ggplot2 if you're familiar with that) makes it easy to add vertices and edges and build up a graph.
+
+```{r add more vertices and edges}
+g <- g + vertices(4) + edges(c(1,4,1,1)) 
+
+plot(g)
+
+```
+
+Now let's try creating a slightly fancier graph 
+
+```{r simple social graph}
+g <- graph.empty(directed = T)
+g <- g+vertices(c("Jack","Jane","John"))
+g <- g+edges(c("Jack","Jane","John","Jane","Jane","John","Jack","John"))
+plot(g, vertex.size = 40, vertex.color = c("light blue","pink","light blue"))
+```
+
+We can also extract the edges and vertices of a graph object and actually set properties of them.
+
+```{r properties}
+V(g)
+E(g)
+V(g)$color
+V(g)$color <-  c("light blue","pink","light blue")
+plot(g,vertex.size = 40)
+```
+
+Now that we have a better understanding of the basics of plotting, let's try a real world example.  We will use all the tweets from a scientific meeting hashtag and look at a graph based on retweets.  In this graph (or more apppropriately network) 
+```{r loading data}
+tweet_data <- read.csv("tweet_data.csv",stringsAsFactors = FALSE)
+str(tweet_data)
+tweet_data %>% select(screen_name, tweet_text) %>% head
+```
+The key features for building our network are the screen name of a user and the screen name of a user they retweet. As you can see in the sample above "@seb_schreiber" retweeted "@davidjayharris" which means in our network we would draw a direct edge between them going from "@seb_schreiber" to "@davidjayharris"
+
+Using the following steps we will build our graph.
+
+1. Filter data to a single day
+2. Create an empty graph
+3. Add all screen names as vertices
+4. Loop over each tweet and check if it was a retweet. If so add a link between screen names
+5. Trim out vertices without connections (or another threshold)
+
+```{r create twitter graph}
+tweet_df <- tweet_data  %>% filter(rptg_dt == "2015-08-14")
+  all_sn <- unique(tweet_df$screen_name)
+  ## Create graph
+  g <- graph.empty()
+  g <- g + vertices(all_sn)
+  
+  
+    for(i in 1:dim(tweet_df)[1]){
+      if(grepl(pattern = 'RT @[a-zA-Z0-9_]{1,15}',x = tweet_df$tweet_text[i])){
+        rt_name <- regmatches(tweet_df$tweet_text[i],regexpr('RT @[a-zA-Z0-9_]{1,15}',tweet_df$tweet_text[i]))
+        rt_name <-  unlist(str_split(rt_name,"@"))[2]
+        tryCatch({g <- g+ edges(c(tweet_df$screen_name[i],rt_name))},
+                 error = function(err) {
+                   err
+                 }
+        )
+      }
+    }
+
+
+    g <- delete.vertices(g, degree(g) == 0)
+    g <- simplify(g)
+    
+    plot(g,vertex.label=NA,vertex.size=2)
+
+
+```
+
+This isn't really a nice plot, so we'll tweak some options, but we also might want to enhance our plot. First I think we have too many connections so we'll trim some out.
+
+```{r prune}
+g <- delete.vertices(g, degree(g) < 4)
+g <- simplify(g)
+```
+
+Next let's change the size of each vertex. I want it to correspond to how many tweets a given screen name has in the whole data set so we'll calculate that, join it back to the existing vertex names and clean up our plot.
+
+```{r enhance plot, message=FALSE}
+sn_ct <- tweet_data %>% group_by(screen_name) %>% summarise(ct =n())
+
+vg_name_df <- data.frame(V(g)$name)
+colnames(vg_name_df) <- ("screen_name")
+V(g)$size <- log((inner_join(vg_name_df,sn_ct))$ct,2)
+coords <- layout_(g, with_dh())
+plot(g,vertex.label=NA, edge.arrow.width=.4,edge.arrow.size=0.4,margin=0,layout=coords)
+  
+
+```
+
+Now there's lots more that we can do to analyze this graph, models that we can overlay on it, this is just the start. But even this plot helps you get a better sense of the nature a retweet network.
